@@ -4,8 +4,8 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
   <parent>
     <artifactId>aurora</artifactId>
-    <groupId>gg.acai</groupId>
-    <version>1.0.0</version>
+    <groupId>io.arctis</groupId>
+    <version>1.0.1</version>
   </parent>
   <modelVersion>4.0.0</modelVersion>
   <artifactId>aurora-regression</artifactId>
@@ -17,9 +17,9 @@
 
   <dependencies>
     <dependency>
-      <groupId>gg.acai</groupId>
+      <groupId>io.arctis</groupId>
       <artifactId>aurora-core</artifactId>
-      <version>1.0.0</version>
+      <version>1.0.1</version>
     </dependency>
   </dependencies>
 

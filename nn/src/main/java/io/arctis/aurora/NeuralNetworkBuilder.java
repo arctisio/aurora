@@ -1,0 +1,375 @@
+package io.arctis.aurora;
+
+import gg.acai.acava.Requisites;
+import io.arctis.aurora.earlystop.EarlyStop;
+import io.arctis.aurora.earlystop.EarlyStoppers;
+import io.arctis.aurora.hyperparameter.Tune;
+import io.arctis.aurora.initializers.Initializer;
+import io.arctis.aurora.initializers.WeightInitializer;
+import io.arctis.aurora.model.EpochAction;
+import io.arctis.aurora.noise.Noise;
+import io.arctis.aurora.noise.NoiseContext;
+import io.arctis.aurora.optimizers.Optimizers;
+import io.arctis.aurora.policy.DecayPolicy;
+import io.arctis.aurora.publics.io.Bar;
+import io.arctis.aurora.model.ActivationFunction;
+import io.arctis.aurora.optimizers.Optimizer;
+import io.arctis.aurora.optimizers.StochasticGradientDescent;
+import io.arctis.aurora.regularization.Regularization;
+import io.arctis.aurora.sets.DataSet;
+import io.arctis.aurora.sets.TestSet;
+
+import java.util.Arrays;
+import java.util.HashSet;
+import java.util.Set;
+import java.util.function.Consumer;
+
+/**
+ * Builder class for the {@link NeuralNetworkTrainer}
+ * <p> Example Usage:
+ * <p><b>Building a Neural Network</b>
+ * <pre>{@code
+ *  NeuralNetworkTrainer trainer = new NeuralNetworkBuilder()
+ *    .name("my_model")
+ *    .learningRate(0.1)
+ *    .epochs(1_000_000)
+ *    .optimizer(new StochasticGradientDescent()) // most common optimizer
+ *    .earlyStops(new Stagnation(20)) // in case stagnation happens, we will stop training to prevent unnecessary training
+ *    .printing(Bar.CLASSIC)
+ *    .activationFunction(ActivationFunction.SIGMOID)
+ *    .epochActions(new EpochAutoSave(10_000, "C:\\Users\\my_user\\models")) // every 10K epochs
+ *    .layers(mapper -> mapper
+ *      .inputDims(3) // add your input layer size here
+ *      .hiddenDims(3) // add your hidden layer size here
+ *      .outputDims(1)) // add your output layer size here
+ *    .build();
+ *
+ *  trainer.train(inputs, outputs); // train the neural network
+ *}</pre>
+ * @author Brissach
+ * @since 02.03.2023 13:13
+ * © Aurora - All Rights Reserved
+ */
+public class NeuralNetworkBuilder {
+
+  protected boolean shouldPrintStats = true;
+  protected boolean autoSave = false;
+
+  protected int epochs = -1;
+  protected double learningRate = -1.0;
+
+  protected String name;
+  protected int inputDims;
+  protected int outputDims;
+  protected int hiddenDims;
+  protected ActivationFunction activationFunction = ActivationFunction.SIGMOID;
+  protected DataSet set;
+  protected EarlyStoppers earlyStoppers = new EarlyStoppers();
+  protected Optimizer optimizer = new StochasticGradientDescent();
+  protected Set<EpochAction<NeuralNetwork>> epochActions = new HashSet<>();
+  protected Bar progressBar = Bar.CLASSIC;
+  protected TestSet evaluationSet;
+  protected AccuracySupplier accuracySupplier;
+  protected NeuralNetworkModel model;
+  protected DecayPolicy<Double> learningRateDecay;
+  protected Regularization regularization;
+  protected WeightInitializer weightInitializer = Initializer.GAUSSIAN.get();
+  protected Noise noise;
+  protected double learningRateDecayRate = 1.0;
+  protected long seed = System.currentTimeMillis();
+
+  /**
+   * Applies a model to this builder for re-training / improvement purposes
+   *
+   * @param model The model to apply
+   * @return This builder for chaining
+   */
+  public NeuralNetworkBuilder from(NeuralNetworkModel model) {
+    this.model = model;
+    this.activationFunction = model.activation();
+    return this;
+  }
+
+  /**
+   * Applies the randomization seed to this neural network model
+   *
+   * @param seed The seed to apply
+   * @return This builder for chaining
+   */
+  public NeuralNetworkBuilder seed(long seed) {
+    this.seed = seed;
+    return this;
+  }
+
+  public NeuralNetworkBuilder noise(Noise noise) {
+    this.noise = noise;
+    return this;
+  }
+
+  public NeuralNetworkBuilder noise(NoiseContext context) {
+    return noise(context.get());
+  }
+
+  /**
+   * Applies a name to this neural network model - for saving and loading purposes
+   *
+   * @param name The name to apply
+   * @return This builder for chaining
+   */
+  public NeuralNetworkBuilder name(String name) {
+    this.name = name;
+    return this;
+  }
+
+  /**
+   * Applies the layer sizes to this neural network model
+   * <pre>
+   * Example Usage:
+   * {@code
+   *  .layers(mapper -> mapper
+   *    .inputDims(3) // add your input layer size here
+   *    .hiddenDims(3) // add your hidden layer size here
+   *    .outputDims(1)) // add your output layer size here
+   *  }
+   * </pre>
+   *
+   * @param mapper The mapper to apply
+   * @return This builder for chaining
+   */
+  public NeuralNetworkBuilder layers(Consumer<LayerMapper> mapper) {
+    LayerMapper layerMapper = new LayerMapper();
+    mapper.accept(layerMapper);
+    inputDims = layerMapper.inputDims;
+    outputDims = layerMapper.outputDims;
+    hiddenDims = layerMapper.hiddenDims;
+    return this;
+  }
+
+  /**
+   * Applies the progress bar to display the training progress
+   *
+   * @param progressBar The progress bar to apply
+   * @return This builder for chaining
+   */
+  public NeuralNetworkBuilder printing(Bar progressBar) {
+    this.progressBar = progressBar;
+    return this;
+  }
+
+  /**
+   * Applies the amount of epochs to train the neural network on
+   *
+   * @param epochs The amount of epochs to train on
+   * @return This builder for chaining
+   */
+  public NeuralNetworkBuilder epochs(int epochs) {
+    this.epochs = epochs;
+    return this;
+  }
+
+  /**
+   * Applies the learning rate to train the neural network on
+   *
+   * @param learningRate The learning rate to train on
+   * @return This builder for chaining
+   */
+  public NeuralNetworkBuilder learningRate(double learningRate) {
+    this.learningRate = learningRate;
+    return this;
+  }
+
+  /**
+   * Applies an accuracy supplier for testing accuracy with custom data
+   *
+   * @param accuracySupplier The accuracy supplier to apply
+   * @return This builder for chaining
+   */
+  public NeuralNetworkBuilder accuracySupplier(AccuracySupplier accuracySupplier) {
+    this.accuracySupplier = accuracySupplier;
+    return this;
+  }
+
+  /**
+   * Applies hyperparameters from a tune
+   *
+   * @param tune The tune to apply
+   * @return This builder for chaining
+   */
+  public NeuralNetworkBuilder fromTune(Tune tune) {
+    this.learningRate = tune.learningRate();
+    this.epochs = tune.epochs();
+    this.hiddenDims = tune.layers();
+    return this;
+  }
+
+  /**
+   * Applies the activation function to this neural network model
+   *
+   * @param activationFunction The activation function to apply
+   * @return This builder for chaining
+   */
+  public NeuralNetworkBuilder activationFunction(ActivationFunction activationFunction) {
+    this.activationFunction = activationFunction;
+    return this;
+  }
+
+  /**
+   * Applies the optimizer to this neural network model
+   *
+   * @param optimizer The optimizer to apply
+   * @return This builder for chaining
+   */
+  public NeuralNetworkBuilder optimizer(Optimizer optimizer) {
+    this.optimizer = optimizer;
+    return this;
+  }
+
+  public NeuralNetworkBuilder optimizer(Optimizers optimizer) {
+    this.optimizer = optimizer.get();
+    return this;
+  }
+
+  public NeuralNetworkBuilder decayRate(double learningRateDecayRate) {
+    this.learningRateDecayRate = learningRateDecayRate;
+    return this;
+  }
+
+
+  /**
+   * Applies the evaluation set to this neural network model after train completion
+   *
+   * @param set The evaluation set to apply
+   * @return This builder for chaining
+   */
+  public NeuralNetworkBuilder evaluationSet(TestSet set) {
+    this.evaluationSet = set;
+    return this;
+  }
+
+  /**
+   * Disables the printing of stats to the console after training completion
+   *
+   * @return This builder for chaining
+   */
+  public NeuralNetworkBuilder disableStatsPrint() {
+    this.shouldPrintStats = false;
+    return this;
+  }
+
+  /**
+   * Enables auto saving of the neural network model after training completion
+   *
+   * @return This builder for chaining
+   */
+  public NeuralNetworkBuilder autoSave() {
+    this.autoSave = true;
+    return this;
+  }
+
+  /**
+   * Applies early stoppers to this neural network model
+   *
+   * @param earlyStops The early stoppers to apply
+   * @return This builder for chaining
+   */
+  public NeuralNetworkBuilder earlyStops(EarlyStop... earlyStops) {
+    this.earlyStoppers.add(earlyStops);
+    return this;
+  }
+
+  /**
+   * Applies epoch iterable action listeners to this neural network model
+   *
+   * @param epochActions The epoch actions to apply
+   * @return This builder for chaining
+   */
+  @SafeVarargs
+  public final NeuralNetworkBuilder epochActions(EpochAction<NeuralNetwork>... epochActions) {
+    this.epochActions.addAll(Arrays.asList(epochActions));
+    return this;
+  }
+
+  /**
+   * Applies a data set to this neural network model to train on
+   *
+   * @param set The data set to apply
+   * @return This builder for chaining
+   */
+  public NeuralNetworkBuilder withDataSet(DataSet set) {
+    this.set = set;
+    return this;
+  }
+
+  public NeuralNetworkBuilder learningRateDecay(DecayPolicy<Double> decayPolicy) {
+    this.learningRateDecay = decayPolicy;
+    return this;
+  }
+
+  public NeuralNetworkBuilder regularization(Regularization regularization) {
+    this.regularization = regularization;
+    return this;
+  }
+
+  public NeuralNetworkBuilder weightInitializer(WeightInitializer weightInitializer) {
+    this.weightInitializer = weightInitializer;
+    return this;
+  }
+
+  public NeuralNetworkBuilder weightInitializer(Initializer initializer) {
+    this.weightInitializer = initializer.get();
+    return this;
+  }
+
+  /**
+   * Builds the neural network trainer
+   *
+   * @return The neural network trainer
+   * @throws IllegalArgumentException If the input layer size, output layer size, hidden layer size or epochs are less than 0
+   */
+  public NeuralNetworkTrainer build() {
+    if (model == null) {
+      Requisites.checkArgument(inputDims > 0, "Input layer size must be greater than 0");
+      Requisites.checkArgument(outputDims > 0, "Output layer size must be greater than 0");
+      Requisites.checkArgument(hiddenDims > 0, "Hidden layer size must be greater than 0");
+      Requisites.checkArgument(epochs > 0, "Epochs must be greater than 0");
+      Requisites.checkArgument(learningRate > 0.0, "Learning rate must be greater than 0.0");
+    }
+    return new NeuralNetworkTrainer(this);
+  }
+
+  public static class LayerMapper {
+
+    private int inputDims;
+    private int hiddenDims;
+    private int outputDims;
+
+    public LayerMapper inputDims(int inputLayerSize) {
+      this.inputDims = inputLayerSize;
+      return this;
+    }
+
+    public LayerMapper hiddenDims(int hiddenLayerSize) {
+      this.hiddenDims = hiddenLayerSize;
+      return this;
+    }
+
+    public LayerMapper outputDims(int outputLayerSize) {
+      this.outputDims = outputLayerSize;
+      return this;
+    }
+
+    int inputLayerSize() {
+      return inputDims;
+    }
+
+    int hiddenLayerSize() {
+      return hiddenDims;
+    }
+
+    int outputLayerSize() {
+      return outputDims;
+    }
+
+  }
+
+}
